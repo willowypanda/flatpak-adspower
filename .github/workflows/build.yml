@@ -10,6 +10,7 @@ on:
       - 'com.adspower.global.desktop'
       - 'com.adspower.global.metainfo.xml'
       - 'adspower_global-wrapper'
+      - 'flathub.json'
   schedule:
     # Check for a new AdsPower release every 6 hours.
     - cron: '0 */6 * * *'
@@ -52,10 +53,10 @@ jobs:
             org.electronjs.Electron2.BaseApp//24.08
 
       - name: Download latest AdsPower .deb
-        id: download
         run: |
-          ./download-latest.sh | tee download.log
-          echo "deb_info=$(tail -n1 download.log)" >> "$GITHUB_OUTPUT"
+          ./download-latest.sh
+          ls -lh deb_download/
+          cat deb_info.json
 
       - name: Determine package revision
         id: version
@@ -63,11 +64,7 @@ jobs:
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
           FORCE_PKG_REV: ${{ github.event.inputs.force_pkg_rev || '' }}
         run: |
-          UPSTREAM_VERSION="$(echo '${{ steps.download.outputs.deb_info }}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"] if "{" in sys.stdin.read() else "")')"
-          # Fallback: parse from filename
-          if [ -z "${UPSTREAM_VERSION}" ]; then
-            UPSTREAM_VERSION="$(ls deb_download/AdsPower-Global-*-x64.deb | head -1 | sed -E 's#.*/AdsPower-Global-([0-9]+\.[0-9]+\.[0-9]+)-x64\.deb#\1#')"
-          fi
+          UPSTREAM_VERSION="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
           echo "upstream_version=${UPSTREAM_VERSION}" >> "$GITHUB_OUTPUT"
 
           # Existing release tag pattern: v<version>-<pkg_rev>
@@ -90,9 +87,10 @@ jobs:
       - name: Skip if version is unchanged and not forced
         if: steps.version.outputs.pkg_rev != '1' && github.event.inputs.force_build != 'true'
         run: |
-          echo "No new AdsPower version detected (latest tag: ${{ steps.version.outputs.release_tag }}). Skipping build."
-          # Mark the remaining release steps as skipped via output.
+          echo "No new AdsPower version detected (latest tag already: ${{ steps.version.outputs.release_tag }}). Skipping build."
+          # Write a marker so later steps can short-circuit.
           echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Build Flatpak
         if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'

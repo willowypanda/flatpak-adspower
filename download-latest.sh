@@ -47,4 +47,9 @@ curl -L --progress-bar -o "${DEB_FILE}" "${URL}"
 echo "[+] Saved: ${DEB_FILE}"
 
 # Print a single-line JSON summary for CI parsing
-printf '{"version":"%s","url":"%s","deb_file":"%s"}\n' "${VERSION}" "${URL}" "${DEB_FILE}"
+DEB_FILE_PATH="${PROJECT_DIR}/deb_download/AdsPower-Global-${VERSION}-x64.deb"
+
+# Save a machine-readable summary for CI
+printf '{"version":"%s","url":"%s","deb_file":"%s"}\n' "${VERSION}" "${URL}" "${DEB_FILE_PATH}" > "${PROJECT_DIR}/deb_info.json"
+
+printf '{"version":"%s","url":"%s","deb_file":"%s"}\n' "${VERSION}" "${URL}" "${DEB_FILE_PATH}"
