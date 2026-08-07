@@ -63,6 +63,13 @@ If you prefer to commit bundles to the repository, enable Git LFS for `*.flatpak
 *.flatpak filter=lfs diff=lfs merge=lfs -text
 ```
 
-## License
+## Current status
+
+GitHub Actions workflow `.github/workflows/build.yml` is ready. After enabling Pages and Actions permissions, trigger it manually or wait for the scheduled run.
+
+## Quick links
+
+- Repository: https://github.com/willowypanda/flatpak-adspower
+- GitHub Pages: `https://willowypanda.github.io/flatpak-adspower` (after Pages is enabled)
 
 The packaging scripts are provided under the MIT license. AdsPower itself is proprietary software owned by its respective authors.
