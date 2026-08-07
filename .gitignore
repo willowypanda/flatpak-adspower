@@ -1,0 +1,14 @@
+.flatpak-builder/
+build/
+repo/
+*.flatpak
+deb_extracted/
+deb_download/
+*.deb
+*.log
+.cache/
+__pycache__/
+*.pyc
+.DS_Store
+*.AppImage
+appimagetool-x86_64.AppImage

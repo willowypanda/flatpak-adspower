@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=AdsPower
+Exec=adspower_global %U
+Terminal=false
+Type=Application
+Icon=com.adspower.global
+StartupWMClass=AdsPower Global
+Comment=AdsPower Global
+MimeType=x-scheme-handler/adsPowerGlobal;
+Categories=Network;Utility;

@@ -1,0 +1,182 @@
+name: Build and release Flatpak
+
+on:
+  schedule:
+    # Check for a new AdsPower release every 6 hours.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force a rebuild even if the version has not changed'
+        required: false
+        default: 'false'
+      force_pkg_rev:
+        description: 'Force package revision (e.g. 2)'
+        required: false
+        default: ''
+
+env:
+  APP_ID: com.adspower.global
+  REPO_NAME: ${{ github.event.repository.name }}
+  PAGES_BASE: "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder dpkg-dev curl python3
+
+      - name: Install Flatpak runtimes
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.electronjs.Electron2.BaseApp//24.08
+
+      - name: Download latest AdsPower .deb
+        id: download
+        run: |
+          ./download-latest.sh | tee download.log
+          echo "deb_info=$(tail -n1 download.log)" >> "$GITHUB_OUTPUT"
+
+      - name: Determine package revision
+        id: version
+        env:
+          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          FORCE_PKG_REV: ${{ github.event.inputs.force_pkg_rev || '' }}
+        run: |
+          UPSTREAM_VERSION="$(echo '${{ steps.download.outputs.deb_info }}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"] if "{" in sys.stdin.read() else "")')"
+          # Fallback: parse from filename
+          if [ -z "${UPSTREAM_VERSION}" ]; then
+            UPSTREAM_VERSION="$(ls deb_download/AdsPower-Global-*-x64.deb | head -1 | sed -E 's#.*/AdsPower-Global-([0-9]+\.[0-9]+\.[0-9]+)-x64\.deb#\1#')"
+          fi
+          echo "upstream_version=${UPSTREAM_VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Existing release tag pattern: v<version>-<pkg_rev>
+          EXISTING_TAGS="$(git ls-remote --tags origin "refs/tags/v${UPSTREAM_VERSION}-*" 2>/dev/null | sed -E 's#.*refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+).*#\2#' | sort -n | tail -1)"
+
+          if [ -n "${FORCE_PKG_REV}" ]; then
+            PKG_REV="${FORCE_PKG_REV}"
+          elif [ -n "${EXISTING_TAGS}" ] && [ "${FORCE_BUILD}" != "true" ]; then
+            # No new build needed; exit early in a later step.
+            PKG_REV="${EXISTING_TAGS}"
+          else
+            # New upstream version or forced build: start at 1.
+            PKG_REV="1"
+          fi
+
+          echo "pkg_rev=${PKG_REV}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${UPSTREAM_VERSION}-${PKG_REV}" >> "$GITHUB_OUTPUT"
+          echo "bundle_name=adspower-global-${UPSTREAM_VERSION}-${PKG_REV}.flatpak" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if version is unchanged and not forced
+        if: steps.version.outputs.pkg_rev != '1' && github.event.inputs.force_build != 'true'
+        run: |
+          echo "No new AdsPower version detected (latest tag: ${{ steps.version.outputs.release_tag }}). Skipping build."
+          # Mark the remaining release steps as skipped via output.
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build Flatpak
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        id: build
+        run: |
+          ./build-flatpak.sh
+          ls -lh *.flatpak
+          echo "bundle_path=$(ls -1 adspower-global-*.flatpak | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Rename bundle to include package revision
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        run: |
+          mv "${{ steps.build.outputs.bundle_path }}" "${{ steps.version.outputs.bundle_name }}"
+          ls -lh "${{ steps.version.outputs.bundle_name }}"
+
+      - name: Create Git tag
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.release_tag }}" -m "Release ${{ steps.version.outputs.release_tag }}"
+          git push origin "${{ steps.version.outputs.release_tag }}"
+
+      - name: Create GitHub Release and upload bundle
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.release_tag }}" \
+            "${{ steps.version.outputs.bundle_name }}" \
+            --title "AdsPower Global ${{ steps.version.outputs.upstream_version }} (pkg ${{ steps.version.outputs.pkg_rev }})" \
+            --generate-notes
+
+      - name: Generate release asset URL for Pages
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        id: release_url
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.release_tag }}"
+          NAME="${{ steps.version.outputs.bundle_name }}"
+          URL="$(gh release view "${TAG}" --json assets --jq ".assets[] | select(.name==\"${NAME}\") | .url")"
+          echo "bundle_url=${URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Update GitHub Pages files
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        run: |
+          mkdir -p docs
+          UPSTREAM="${{ steps.version.outputs.upstream_version }}"
+          PKG_REV="${{ steps.version.outputs.pkg_rev }}"
+          TAG="${{ steps.version.outputs.release_tag }}"
+          BUNDLE_URL="${{ steps.release_url.outputs.bundle_url }}"
+          cat > docs/index.html <<EOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>AdsPower Global Flatpak Repository</title>
+          </head>
+          <body>
+            <h1>AdsPower Global Flatpak Repository</h1>
+            <p>Latest release: <strong>${UPSTREAM}-${PKG_REV}</strong></p>
+            <p>Download the bundle directly:</p>
+            <a href="${BUNDLE_URL}">${BUNDLE_URL}</a>
+            <p>Install via flatpak:</p>
+            <pre>flatpak install --bundle ${BUNDLE_URL}</pre>
+          </body>
+          </html>
+          EOF
+
+          cat > docs/com.adspower.global.flatpakref <<EOF
+          [Flatpak Ref]
+          Name=com.adspower.global
+          Branch=stable
+          Title=AdsPower Global
+          Url=${BUNDLE_URL}
+          IsRuntime=false
+          GPGKey=
+          EOF
+
+      - name: Commit and push Pages update
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --cached --quiet || git commit -m "Update Pages for ${{ steps.version.outputs.release_tag }}"
+          git push
+
+      - name: Upload bundle artifact (fallback)
+        if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: "${{ steps.version.outputs.bundle_name }}"
+          retention-days: 5

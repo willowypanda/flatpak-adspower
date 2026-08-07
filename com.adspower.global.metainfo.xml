@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.adspower.global</id>
+  <name>AdsPower</name>
+  <summary>AdsPower anti-detect browser for multi-accounting</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <launchable type="desktop-id">com.adspower.global.desktop</launchable>
+  <description>
+    <p>AdsPower is an anti-detect browser designed for managing multiple accounts securely.</p>
+  </description>
+  <developer_name>AdsPower</developer_name>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="8.7.23" date="2025-07-27"/>
+  </releases>
+</component>
