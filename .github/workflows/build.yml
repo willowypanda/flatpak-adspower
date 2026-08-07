@@ -1,6 +1,15 @@
 name: Build and release Flatpak
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/build.yml'
+      - 'build-flatpak.sh'
+      - 'download-latest.sh'
+      - 'com.adspower.global.desktop'
+      - 'com.adspower.global.metainfo.xml'
+      - 'adspower_global-wrapper'
   schedule:
     # Check for a new AdsPower release every 6 hours.
     - cron: '0 */6 * * *'
