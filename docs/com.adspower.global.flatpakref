@@ -1,0 +1,7 @@
+[Flatpak Ref]
+Name=com.adspower.global
+Branch=stable
+Title=AdsPower Global
+Url=https://github.com/willowypanda/flatpak-adspower/releases/download/v8.7.23-1/adspower-global-8.7.23-1.flatpak
+IsRuntime=false
+GPGKey=
