@@ -111,18 +111,31 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.release_tag }}" -m "Release ${{ steps.version.outputs.release_tag }}"
-          git push origin "${{ steps.version.outputs.release_tag }}"
+          TAG="${{ steps.version.outputs.release_tag }}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists on remote; skipping tag creation."
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
 
-      - name: Create GitHub Release and upload bundle
+      - name: Create or update GitHub Release and upload bundle
         if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.version.outputs.release_tag }}" \
-            "${{ steps.version.outputs.bundle_name }}" \
-            --title "AdsPower Global ${{ steps.version.outputs.upstream_version }} (pkg ${{ steps.version.outputs.pkg_rev }})" \
-            --generate-notes
+          TAG="${{ steps.version.outputs.release_tag }}"
+          NAME="${{ steps.version.outputs.bundle_name }}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; uploading asset to existing release."
+            gh release upload "${TAG}" "${NAME}" --clobber
+          else
+            gh release create "${TAG}" \
+              "${NAME}" \
+              --title "AdsPower Global ${{ steps.version.outputs.upstream_version }} (pkg ${{ steps.version.outputs.pkg_rev }})" \
+              --generate-notes
+          fi
 
       - name: Generate release asset URL for Pages
         if: steps.version.outputs.pkg_rev == '1' || github.event.inputs.force_build == 'true'
