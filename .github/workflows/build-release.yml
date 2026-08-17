@@ -41,6 +41,7 @@ jobs:
       upstream_version: ${{ steps.version.outputs.upstream_version }}
       pkg_rev: ${{ steps.version.outputs.pkg_rev }}
       repo_artifact: ${{ steps.version.outputs.repo_artifact }}
+      repo_artifact_id: ${{ steps.repo-upload.outputs.artifact-id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -94,6 +95,7 @@ jobs:
           test -f repo/summary
 
       - name: Upload OSTree repository artifact
+        id: repo-upload
         if: steps.version.outputs.should_release == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -116,6 +118,7 @@ jobs:
     uses: ./.github/workflows/upload-r2.yml
     with:
       repo_artifact: ${{ needs.check-and-build.outputs.repo_artifact }}
+      repo_artifact_id: ${{ needs.check-and-build.outputs.repo_artifact_id }}
       upstream_version: ${{ needs.check-and-build.outputs.upstream_version }}
       pkg_rev: ${{ needs.check-and-build.outputs.pkg_rev }}
     secrets: inherit
