@@ -48,7 +48,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder dpkg-dev curl python3 awscli
+          sudo apt-get install -y flatpak flatpak-builder dpkg-dev curl python3 python3-pip
+          python3 -m pip install --user --break-system-packages awscli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
 

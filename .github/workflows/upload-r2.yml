@@ -73,7 +73,11 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Install AWS CLI
-        run: sudo apt-get update && sudo apt-get install -y awscli
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          python3 -m pip install --user --break-system-packages awscli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Add metadata flatpakrepo file
         env:
