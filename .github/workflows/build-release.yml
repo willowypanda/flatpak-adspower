@@ -1,23 +1,25 @@
-name: Build and release Flatpak
+name: Build and publish AdsPower Flatpak
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       force_build:
         description: Force a rebuild
         required: false
-        default: 'false'
+        default: false
         type: boolean
       force_pkg_rev:
         description: Packaging revision override
         required: false
         default: ''
+        type: string
+  schedule:
+    - cron: '0 */6 * * *'
   push:
-    branches: [master]
+    branches:
+      - master
     paths:
-      - '.github/workflows/**'
+      - '.github/workflows/build-release.yml'
       - 'build-flatpak.sh'
       - 'download-latest.sh'
       - 'com.adspower.global.desktop'
@@ -29,14 +31,11 @@ permissions:
   contents: write
   actions: read
 
-env:
-  APP_ID: com.adspower.global
-
 jobs:
   build-publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install dependencies
@@ -48,29 +47,39 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
 
-      - name: Download latest AdsPower .deb
+      - name: Download latest package
         run: ./download-latest.sh
 
-      - name: Determine version and revision
+      - name: Determine version
         id: version
         env:
-          FORCE_BUILD: ${{ inputs.force_build || 'false' }}
-          FORCE_PKG_REV: ${{ inputs.force_pkg_rev || '' }}
+          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          FORCE_PKG_REV: ${{ github.event.inputs.force_pkg_rev || '' }}
         run: |
-          VERSION="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
-          EXISTING="$(git ls-remote --tags origin "refs/tags/v${VERSION}-*" 2>/dev/null | sed -nE 's#.*refs/tags/v[0-9.]+-([0-9]+)(\^\{\})?$#\1#' | sort -n | tail -1)"
-          if [ -n "${FORCE_PKG_REV}" ]; then REV="${FORCE_PKG_REV}"; BUILD=true
-          elif [ "${FORCE_BUILD}" = true ]; then REV=$(( ${EXISTING:-0} + 1 )); BUILD=true
-          elif [ -n "${EXISTING}" ]; then REV="${EXISTING}"; BUILD=false
-          else REV=1; BUILD=true; fi
-          echo "upstream_version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "pkg_rev=${REV}" >> "$GITHUB_OUTPUT"
-          echo "should_release=${BUILD}" >> "$GITHUB_OUTPUT"
-          echo "bundle_name=adspower-global-${VERSION}-${REV}.flatpak" >> "$GITHUB_OUTPUT"
-          echo "repo_artifact=flatpak-repo-${VERSION}-${REV}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          version="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
+          existing="$(git ls-remote --tags origin "refs/tags/v${version}-*" 2>/dev/null | sed -nE 's#.*refs/tags/v[0-9.]+-([0-9]+)(\^\{\})?$#\1#' | sort -n | tail -1)"
+          if [ -n "$FORCE_PKG_REV" ]; then
+            revision="$FORCE_PKG_REV"
+            publish=true
+          elif [ "$FORCE_BUILD" = true ]; then
+            revision=$(( ${existing:-0} + 1 ))
+            publish=true
+          elif [ -n "$existing" ]; then
+            revision="$existing"
+            publish=false
+          else
+            revision=1
+            publish=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}-${revision}" >> "$GITHUB_OUTPUT"
+          echo "bundle=adspower-global-${version}-${revision}.flatpak" >> "$GITHUB_OUTPUT"
 
-      - name: Download existing shared R2 repository
-        if: steps.version.outputs.should_release == 'true'
+      - name: Download existing R2 repository
+        if: steps.version.outputs.publish == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -80,15 +89,15 @@ jobs:
           mkdir -p repo
           aws s3 sync "s3://${R2_BUCKET}/" repo/ --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --no-progress || true
 
-      - name: Build Flatpak OSTree repository
-        if: steps.version.outputs.should_release == 'true'
+      - name: Build OSTree repository
+        if: steps.version.outputs.publish == 'true'
         run: |
           ./build-flatpak.sh --no-bundle
           flatpak build-update-repo repo --title='Shared Flatpak Repository' --comment='Applications published to the shared repository'
-          test -f repo/summary
+          test -s repo/summary
 
-      - name: Add R2 repository metadata
-        if: steps.version.outputs.should_release == 'true'
+      - name: Add Flatpak repository metadata
+        if: steps.version.outputs.publish == 'true'
         env:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
@@ -102,61 +111,51 @@ jobs:
           GPGKey=
           EOF
 
-      - name: Upload OSTree repository to Cloudflare R2
-        if: steps.version.outputs.should_release == 'true'
+      - name: Publish OSTree repository to R2
+        if: steps.version.outputs.publish == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          aws s3 sync repo/ "s3://${R2_BUCKET}/" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --delete --no-progress
+        run: aws s3 sync repo/ "s3://${R2_BUCKET}/" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --delete --no-progress
 
-      - name: Verify public R2 repository
-        if: steps.version.outputs.should_release == 'true'
+      - name: Verify R2 repository
+        if: steps.version.outputs.publish == 'true'
         env:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: curl --fail --location --silent --show-error "${R2_PUBLIC_URL%/}/summary" >/dev/null
 
-      - name: Upload OSTree artifact
-        if: steps.version.outputs.should_release == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.version.outputs.repo_artifact }}
-          path: repo
-          retention-days: 2
-
       - name: Create Git tag
-        if: steps.version.outputs.should_release == 'true'
+        if: steps.version.outputs.publish == 'true'
         env:
-          TAG: v${{ steps.version.outputs.upstream_version }}-${{ steps.version.outputs.pkg_rev }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then echo "Tag exists"; else git tag -a "${TAG}" -m "Release ${TAG}" && git push origin "${TAG}"; fi
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag already exists"
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
 
       - name: Create optional GitHub Release bundle
-        if: steps.version.outputs.should_release == 'true'
+        if: steps.version.outputs.publish == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ steps.version.outputs.upstream_version }}-${{ steps.version.outputs.pkg_rev }}
-          BUNDLE: ${{ steps.version.outputs.bundle_name }}
+          TAG: ${{ steps.version.outputs.tag }}
+          BUNDLE: ${{ steps.version.outputs.bundle }}
         run: |
           timeout 20m flatpak build-bundle repo "${BUNDLE}" com.adspower.global
-          if gh release view "${TAG}" >/dev/null 2>&1; then gh release upload "${TAG}" "${BUNDLE}" --clobber; else gh release create "${TAG}" "${BUNDLE}" --title "AdsPower Global ${{ steps.version.outputs.upstream_version }} (pkg ${{ steps.version.outputs.pkg_rev }})" --generate-notes; fi
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${BUNDLE}" --clobber
+          else
+            gh release create "${TAG}" "${BUNDLE}" --title "AdsPower Global ${{ steps.version.outputs.version }} (pkg ${{ steps.version.outputs.revision }})" --generate-notes
+          fi
 
-      - name: Upload optional bundle artifact
-        if: steps.version.outputs.should_release == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.version.outputs.bundle_name }}
-          path: ${{ steps.version.outputs.bundle_name }}
-          retention-days: 2
-          if-no-files-found: ignore
-      
       - name: No update needed
-        if: steps.version.outputs.should_release != 'true'
-        run: echo "AdsPower ${steps.version.outputs.upstream_version} is already published; nothing to do."
+        if: steps.version.outputs.publish != 'true'
+        run: echo "No new AdsPower version detected"
 
-      
