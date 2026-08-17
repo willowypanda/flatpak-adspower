@@ -70,6 +70,8 @@ jobs:
         with:
           name: ${{ inputs.bundle_name }}
           path: bundle
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Download bundle from another workflow run
         if: github.event_name == 'workflow_dispatch'
