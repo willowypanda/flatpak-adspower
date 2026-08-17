@@ -6,9 +6,6 @@ on:
       repo_artifact:
         required: true
         type: string
-      caller_run_id:
-        required: true
-        type: string
       upstream_version:
         required: true
         type: string
@@ -34,10 +31,6 @@ on:
         type: string
       repo_artifact:
         description: OSTree artifact name
-        required: true
-        type: string
-      caller_run_id:
-        description: Build workflow run ID containing the OSTree artifact
         required: true
         type: string
       upstream_version:
@@ -67,8 +60,6 @@ jobs:
         with:
           name: ${{ inputs.repo_artifact }}
           path: repo
-          run-id: ${{ inputs.caller_run_id }}
-          github-token: ${{ github.token }}
 
       - name: Download OSTree artifact from selected run
         if: github.event_name == 'workflow_dispatch'
