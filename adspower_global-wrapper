@@ -2,6 +2,8 @@
 set -e
 
 export ELECTRON_DISABLE_SANDBOX=1
+# Electron sandbox remains disabled for compatibility with the original .deb package.
+# This is intentionally unchanged in this first low-risk hardening pass.
 export CHROME_DEVEL_SANDBOX=""
 export NODE_ENV=production
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.var/app/com.adspower.global/config}"
