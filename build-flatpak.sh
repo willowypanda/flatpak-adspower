@@ -3,9 +3,19 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# If a .deb path is provided as $1, use it; otherwise rely on download-latest.sh
-# having placed the file under deb_download/ before this script runs.
-DEB="${1:-${PROJECT_DIR}/deb_download/AdsPower-Global-*-x64.deb}"
+# Optional flags and .deb path.
+NO_BUNDLE=false
+DEB_ARG=""
+for arg in "$@"; do
+    case "${arg}" in
+        --no-bundle) NO_BUNDLE=true ;;
+        -*) echo "[!] Unknown option: ${arg}" >&2; exit 1 ;;
+        *) DEB_ARG="${arg}" ;;
+    esac
+done
+
+# If a .deb path is provided, use it; otherwise use deb_download/.
+DEB="${DEB_ARG:-${PROJECT_DIR}/deb_download/AdsPower-Global-*-x64.deb}"
 
 # Determine basename and version from the actual .deb file
 if [ -f "${DEB}" ]; then
@@ -138,10 +148,13 @@ echo "[+] Building Flatpak..."
 cd "${PROJECT_DIR}"
 ${FB} --force-clean --state-dir="${STATE_DIR}" --repo="${REPO_DIR}" "${BUILD_DIR}" "${MANIFEST}"
 
-echo "[+] Creating single-file bundle..."
-flatpak build-bundle "${REPO_DIR}" "${PROJECT_DIR}/adspower-global-${VERSION}.flatpak" "${APP_ID}"
-
-echo "[+] Done. Bundle: ${PROJECT_DIR}/adspower-global-${VERSION}.flatpak"
+if [ "${NO_BUNDLE}" = true ]; then
+    echo "[+] Bundle creation skipped; OSTree repository is ready: ${REPO_DIR}"
+else
+    echo "[+] Creating single-file bundle..."
+    flatpak build-bundle "${REPO_DIR}" "${PROJECT_DIR}/adspower-global-${VERSION}.flatpak" "${APP_ID}"
+    echo "[+] Done. Bundle: ${PROJECT_DIR}/adspower-global-${VERSION}.flatpak"
+fi
 
 # Output a JSON summary for CI parsing
 printf '{"version":"%s","bundle":"%s/adspower-global-%s.flatpak"}\n' "${VERSION}" "${PROJECT_DIR}" "${VERSION}"

@@ -2,6 +2,8 @@
 
 将 AdsPower Global Linux `.deb` 转换成 Flatpak，并自动发布到 GitHub Release 和 Cloudflare R2 Flatpak OSTree 仓库。
 
+构建流程优先发布 R2 OSTree 仓库；GitHub Release 的单文件 `.flatpak` 是独立的可选步骤，打包超时不会阻止 R2 更新。
+
 ## Cloudflare R2
 
 本项目使用共享 R2 bucket 托管多个 Flatpak 应用。当前 AdsPower 的 R2 remote URL 是：
