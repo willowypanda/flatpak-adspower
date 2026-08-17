@@ -6,6 +6,9 @@ on:
       repo_artifact:
         required: true
         type: string
+      repo_artifact_id:
+        required: true
+        type: string
       upstream_version:
         required: true
         type: string
@@ -58,7 +61,7 @@ jobs:
         if: github.event_name == 'workflow_call'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.repo_artifact }}
+          artifact-ids: ${{ inputs.repo_artifact_id }}
           path: repo
 
       - name: Download OSTree artifact from selected run
