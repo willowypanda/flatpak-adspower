@@ -1,0 +1,33 @@
+name: Run build release and R2 upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Force a rebuild and new packaging revision
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: '15 */6 * * *'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-release.yml
+    with:
+      force_build: ${{ inputs.force_build || false }}
+    secrets: inherit
+
+  upload-r2:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    uses: ./.github/workflows/upload-r2.yml
+    with:
+      build_run_id: ${{ github.run_id }}
+      version: ${{ needs.build.outputs.version }}
+      revision: ${{ needs.build.outputs.revision }}
+    secrets: inherit
