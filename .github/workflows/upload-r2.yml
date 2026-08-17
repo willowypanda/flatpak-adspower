@@ -1,28 +1,6 @@
 name: Upload Flatpak repository to Cloudflare R2
 
 on:
-  workflow_call:
-    inputs:
-      repo_artifact:
-        required: true
-        type: string
-      upstream_version:
-        required: true
-        type: string
-      pkg_rev:
-        required: true
-        type: string
-    secrets:
-      R2_ACCOUNT_ID:
-        required: true
-      R2_ACCESS_KEY_ID:
-        required: true
-      R2_SECRET_ACCESS_KEY:
-        required: true
-      R2_BUCKET:
-        required: true
-      R2_PUBLIC_URL:
-        required: true
   workflow_dispatch:
     inputs:
       repo_run_id:
