@@ -116,7 +116,6 @@ jobs:
     uses: ./.github/workflows/upload-r2.yml
     with:
       repo_artifact: ${{ needs.check-and-build.outputs.repo_artifact }}
-      repo_artifact_id: ${{ needs.check-and-build.outputs.repo_artifact_id }}
       upstream_version: ${{ needs.check-and-build.outputs.upstream_version }}
       pkg_rev: ${{ needs.check-and-build.outputs.pkg_rev }}
     secrets: inherit
