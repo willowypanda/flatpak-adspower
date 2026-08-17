@@ -41,7 +41,7 @@ jobs:
       upstream_version: ${{ steps.version.outputs.upstream_version }}
       pkg_rev: ${{ steps.version.outputs.pkg_rev }}
       repo_artifact: ${{ steps.version.outputs.repo_artifact }}
-      repo_artifact_id: ${{ steps.repo-upload.outputs.artifact-id }}
+      repo_artifact_id: ${{ steps.repo_upload.outputs.artifact-id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -95,7 +95,7 @@ jobs:
           test -f repo/summary
 
       - name: Upload OSTree repository artifact
-        id: repo-upload
+        id: repo_upload
         if: steps.version.outputs.should_release == 'true'
         uses: actions/upload-artifact@v4
         with:
