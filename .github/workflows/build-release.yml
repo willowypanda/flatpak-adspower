@@ -1,6 +1,19 @@
-name: Build and publish AdsPower Flatpak
+name: Build AdsPower Flatpak release
 
 on:
+  workflow_call:
+    inputs:
+      force_build:
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      publish:
+        value: ${{ jobs.build.outputs.publish }}
+      version:
+        value: ${{ jobs.build.outputs.version }}
+      revision:
+        value: ${{ jobs.build.outputs.revision }}
   workflow_dispatch:
     inputs:
       force_build:
@@ -15,23 +28,19 @@ on:
         type: string
   schedule:
     - cron: '0 */6 * * *'
-  push:
-    branches: [master]
-    paths:
-      - '.github/workflows/build-release.yml'
-      - 'build-flatpak.sh'
-      - 'download-latest.sh'
-      - 'com.adspower.global.desktop'
-      - 'com.adspower.global.metainfo.xml'
-      - 'adspower_global-wrapper'
-      - 'flathub.json'
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
-  build-publish:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+      version: ${{ steps.version.outputs.version }}
+      revision: ${{ steps.version.outputs.revision }}
+      bundle: ${{ steps.version.outputs.bundle }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,104 +49,92 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder dpkg-dev curl python3 python3-pip
-          python3 -m pip install --user --break-system-packages awscli
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
+          flatpak install --user -y flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.electronjs.Electron2.BaseApp//24.08
 
-      - name: Download latest package
+      - name: Download latest AdsPower package
         run: ./download-latest.sh
 
-      - name: Determine version and revision
+      - name: Determine version and package revision
         id: version
-        env:
-          FORCE_BUILD: ${{ inputs.force_build || 'false' }}
-          FORCE_PKG_REV: ${{ inputs.force_pkg_rev || '' }}
         run: |
           set -euo pipefail
-          version="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
-          existing="$(git ls-remote --tags origin "refs/tags/v${version}-*" 2>/dev/null | sed -nE 's#.*refs/tags/v[0-9.]+-([0-9]+)(\^\{\})?$#\1#' | sort -n | tail -1)"
-          if [ -n "$FORCE_PKG_REV" ]; then revision="$FORCE_PKG_REV"; publish=true
-          elif [ "$FORCE_BUILD" = true ]; then revision=$(( ${existing:-0} + 1 )); publish=true
-          elif [ -n "$existing" ]; then revision="$existing"; publish=false
-          else revision=1; publish=true; fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "tag=v${version}-${revision}" >> "$GITHUB_OUTPUT"
-          echo "bundle=adspower-global-${version}-${revision}.flatpak" >> "$GITHUB_OUTPUT"
+          VERSION="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
+          EXISTING="$(git ls-remote --tags origin "refs/tags/v${VERSION}-*" 2>/dev/null | sed -nE 's#.*refs/tags/v[0-9.]+-([0-9]+)(\^\{\})?$#\1#' | sort -n | tail -1)"
+          FORCE="${{ inputs.force_build || 'false' }}"
+          if [ "${FORCE}" = true ]; then
+            REV=$(( ${EXISTING:-0} + 1 ))
+            PUBLISH=true
+          elif [ -n "${EXISTING}" ]; then
+            REV="${EXISTING}"
+            PUBLISH=false
+          else
+            REV=1
+            PUBLISH=true
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "revision=${REV}" >> "$GITHUB_OUTPUT"
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "bundle=adspower-global-${VERSION}-${REV}.flatpak" >> "$GITHUB_OUTPUT"
+          printf 'publish=%s\nversion=%s\nrevision=%s\nbundle=adspower-global-%s-%s.flatpak\n' \
+            "${PUBLISH}" "${VERSION}" "${REV}" "${VERSION}" "${REV}" > build-result.txt
 
-      - name: Download existing R2 repository
-        if: steps.version.outputs.publish == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          mkdir -p repo
-          aws s3 sync "s3://${R2_BUCKET}/" repo/ --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --no-progress || true
-
-      - name: Build OSTree repository
+      - name: Build Flatpak OSTree repository
         if: steps.version.outputs.publish == 'true'
         run: |
           ./build-flatpak.sh --no-bundle
-          flatpak build-update-repo repo --title='Shared Flatpak Repository' --comment='Applications published to the shared repository'
+          flatpak build-update-repo repo \
+            --title='Shared Flatpak Repository' \
+            --comment='Applications published to the shared repository'
           test -s repo/summary
-
-      - name: Add R2 repository metadata
-        if: steps.version.outputs.publish == 'true'
-        env:
-          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
-        run: |
-          printf '%s\n' '[Flatpak Repo]' 'Title=Shared Flatpak Repository' "Url=${R2_PUBLIC_URL%/}" "Homepage=${R2_PUBLIC_URL%/}" 'Comment=Shared Flatpak repository' 'Description=Applications published to the shared repository' 'GPGKey=' > repo/com.adspower.global.flatpakrepo
-
-      - name: Publish OSTree repository to R2
-        if: steps.version.outputs.publish == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: aws s3 sync repo/ "s3://${R2_BUCKET}/" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --delete --no-progress
-
-      - name: Verify public R2 repository
-        if: steps.version.outputs.publish == 'true'
-        env:
-          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
-        run: curl --fail --location --silent --show-error "${R2_PUBLIC_URL%/}/summary" >/dev/null
 
       - name: Create Git tag
         if: steps.version.outputs.publish == 'true'
         env:
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then echo 'Tag already exists'; else git tag -a "${TAG}" -m "Release ${TAG}" && git push origin "${TAG}"; fi
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag already exists"
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
 
-      - name: Create optional GitHub Release bundle
+      - name: Create GitHub Release and upload bundle
         if: steps.version.outputs.publish == 'true'
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
           BUNDLE: ${{ steps.version.outputs.bundle }}
         run: |
-          timeout 20m flatpak build-bundle repo "${BUNDLE}" com.adspower.global
-          if gh release view "${TAG}" >/dev/null 2>&1; then gh release upload "${TAG}" "${BUNDLE}" --clobber; else gh release create "${TAG}" "${BUNDLE}" --title "AdsPower Global ${{ steps.version.outputs.version }} (pkg ${{ steps.version.outputs.revision }})" --generate-notes; fi
+          timeout 30m flatpak build-bundle repo "${BUNDLE}" com.adspower.global
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${BUNDLE}" --clobber
+          else
+            gh release create "${TAG}" "${BUNDLE}" \
+              --title "AdsPower Global ${{ steps.version.outputs.version }} (pkg ${{ steps.version.outputs.revision }})" \
+              --generate-notes
+          fi
 
-      - name: No update needed
-        if: steps.version.outputs.publish != 'true'
-        run: echo 'No new AdsPower version detected'
+      - name: Upload build result
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-result
+          path: build-result.txt
+          retention-days: 3
 
-      - name: Upload OSTree artifact
+      - name: Upload OSTree repository for R2 workflow
         if: steps.version.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ostree-repo-${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
+          name: ostree-repo
           path: repo
-          retention-days: 2
-          if-no-files-found: ignore
+          retention-days: 3
+          if-no-files-found: error
 
-      
+  
