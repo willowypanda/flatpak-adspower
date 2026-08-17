@@ -41,7 +41,6 @@ jobs:
       upstream_version: ${{ steps.version.outputs.upstream_version }}
       pkg_rev: ${{ steps.version.outputs.pkg_rev }}
       repo_artifact: ${{ steps.version.outputs.repo_artifact }}
-      caller_run_id: ${{ github.run_id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -117,7 +116,6 @@ jobs:
     uses: ./.github/workflows/upload-r2.yml
     with:
       repo_artifact: ${{ needs.check-and-build.outputs.repo_artifact }}
-      caller_run_id: ${{ needs.check-and-build.outputs.caller_run_id }}
       upstream_version: ${{ needs.check-and-build.outputs.upstream_version }}
       pkg_rev: ${{ needs.check-and-build.outputs.pkg_rev }}
     secrets: inherit
