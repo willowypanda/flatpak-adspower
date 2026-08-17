@@ -1,0 +1,169 @@
+name: Upload Flatpak repository to Cloudflare R2
+
+on:
+  workflow_call:
+    inputs:
+      bundle_name:
+        required: true
+        type: string
+      app_id:
+        required: true
+        type: string
+      upstream_version:
+        required: true
+        type: string
+      pkg_rev:
+        required: true
+        type: string
+    secrets:
+      R2_ACCOUNT_ID:
+        required: true
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
+        required: true
+      R2_BUCKET:
+        required: true
+      R2_PUBLIC_URL:
+        required: true
+  workflow_dispatch:
+    inputs:
+      bundle_run_id:
+        description: Successful build workflow run ID containing the bundle artifact
+        required: true
+        type: string
+      bundle_name:
+        description: Artifact name, for example adspower-global-8.7.23-1.flatpak
+        required: true
+        type: string
+      app_id:
+        description: Flatpak application ID
+        required: true
+        default: com.adspower.global
+        type: string
+      upstream_version:
+        description: Upstream application version
+        required: true
+        type: string
+      pkg_rev:
+        description: Packaging revision
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  AWS_EC2_METADATA_DISABLED: 'true'
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Flatpak bundle artifact
+        if: github.event_name == 'workflow_call'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.bundle_name }}
+          path: bundle
+
+      - name: Download bundle from another workflow run
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.bundle_name }}
+          path: bundle
+          run-id: ${{ inputs.bundle_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Set metadata
+        id: metadata
+        env:
+          CALL_BUNDLE: ${{ inputs.bundle_name }}
+          MANUAL_BUNDLE: ${{ inputs.bundle_name }}
+          CALL_APP_ID: ${{ inputs.app_id }}
+          MANUAL_APP_ID: ${{ inputs.app_id }}
+          CALL_VERSION: ${{ inputs.upstream_version }}
+          MANUAL_VERSION: ${{ inputs.upstream_version }}
+          CALL_REV: ${{ inputs.pkg_rev }}
+          MANUAL_REV: ${{ inputs.pkg_rev }}
+        run: |
+          BUNDLE="${CALL_BUNDLE:-${MANUAL_BUNDLE}}"
+          APP_ID="${CALL_APP_ID:-${MANUAL_APP_ID}}"
+          VERSION="${CALL_VERSION:-${MANUAL_VERSION}}"
+          REV="${CALL_REV:-${MANUAL_REV}}"
+          test -n "${BUNDLE}" && test -n "${APP_ID}" && test -n "${VERSION}" && test -n "${REV}"
+          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
+          echo "app_id=${APP_ID}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rev=${REV}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Flatpak tools and AWS CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak awscli
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Sdk//24.08
+
+      - name: Download existing R2 OSTree repository
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          mkdir -p repo
+          aws s3 sync "s3://${R2_BUCKET}/" repo/ \
+            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --no-progress || true
+
+      - name: Import bundle and update OSTree summary
+        env:
+          BUNDLE: bundle/${{ steps.metadata.outputs.bundle }}
+          APP_ID: ${{ steps.metadata.outputs.app_id }}
+        run: |
+          test -f "${BUNDLE}"
+          flatpak build-import-bundle repo "${BUNDLE}"
+          flatpak build-update-repo repo \
+            --title="Shared Flatpak Repository" \
+            --comment="Applications published by flatpak-adspower" \
+            --prune
+
+      - name: Publish repository metadata
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          APP_ID: ${{ steps.metadata.outputs.app_id }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          REV: ${{ steps.metadata.outputs.rev }}
+        run: |
+          mkdir -p repo-meta
+          cat > repo-meta/${APP_ID}.flatpakrepo <<EOF
+          [Flatpak Repo]
+          Title=Shared Flatpak Repository
+          Url=${R2_PUBLIC_URL}
+          Homepage=${R2_PUBLIC_URL}
+          Comment=Shared Flatpak repository
+          Description=Applications published to the shared repository
+          GPGKey=
+          EOF
+          cp repo-meta/${APP_ID}.flatpakrepo repo/${APP_ID}.flatpakrepo
+          aws s3 sync repo/ "s3://${R2_BUCKET}/" \
+            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --delete --no-progress
+
+      - name: Verify public Flatpak summary
+        env:
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          sleep 5
+          curl --fail --location --silent --show-error \
+            "${R2_PUBLIC_URL%/}/summary" >/dev/null
+          echo "Public Flatpak repository is reachable at ${R2_PUBLIC_URL}"

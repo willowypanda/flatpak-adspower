@@ -1,0 +1,152 @@
+name: Build and release Flatpak
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Force a rebuild even when the upstream version is unchanged
+        required: false
+        default: 'false'
+        type: boolean
+      force_pkg_rev:
+        description: Package revision override, for example 2
+        required: false
+        default: ''
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/**'
+      - 'build-flatpak.sh'
+      - 'download-latest.sh'
+      - 'com.adspower.global.desktop'
+      - 'com.adspower.global.metainfo.xml'
+      - 'adspower_global-wrapper'
+      - 'flathub.json'
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: com.adspower.global
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.version.outputs.should_release }}
+      bundle_name: ${{ steps.version.outputs.bundle_name }}
+      upstream_version: ${{ steps.version.outputs.upstream_version }}
+      pkg_rev: ${{ steps.version.outputs.pkg_rev }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder dpkg-dev curl python3
+
+      - name: Install Flatpak runtimes
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.electronjs.Electron2.BaseApp//24.08
+
+      - name: Download latest AdsPower .deb
+        run: |
+          ./download-latest.sh
+          cat deb_info.json
+
+      - name: Determine package revision
+        id: version
+        env:
+          FORCE_BUILD: ${{ inputs.force_build || 'false' }}
+          FORCE_PKG_REV: ${{ inputs.force_pkg_rev || '' }}
+        run: |
+          UPSTREAM_VERSION="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
+          EXISTING_REV="$(git ls-remote --tags origin "refs/tags/v${UPSTREAM_VERSION}-*" 2>/dev/null | sed -nE 's#.*refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)(\^\{\})?$#\1#' | sort -n | tail -1)"
+
+          if [ -n "${FORCE_PKG_REV}" ]; then
+            PKG_REV="${FORCE_PKG_REV}"
+            SHOULD_RELEASE=true
+          elif [ "${FORCE_BUILD}" = true ]; then
+            PKG_REV="${EXISTING_REV:-0}"
+            PKG_REV=$((PKG_REV + 1))
+            SHOULD_RELEASE=true
+          elif [ -n "${EXISTING_REV}" ]; then
+            PKG_REV="${EXISTING_REV}"
+            SHOULD_RELEASE=false
+          else
+            PKG_REV=1
+            SHOULD_RELEASE=true
+          fi
+
+          echo "upstream_version=${UPSTREAM_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "pkg_rev=${PKG_REV}" >> "$GITHUB_OUTPUT"
+          echo "should_release=${SHOULD_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${UPSTREAM_VERSION}-${PKG_REV}" >> "$GITHUB_OUTPUT"
+          echo "bundle_name=adspower-global-${UPSTREAM_VERSION}-${PKG_REV}.flatpak" >> "$GITHUB_OUTPUT"
+
+      - name: Build Flatpak
+        if: steps.version.outputs.should_release == 'true'
+        id: build
+        run: |
+          ./build-flatpak.sh
+          BUILT="$(find . -maxdepth 1 -name 'adspower-global-*.flatpak' -printf '%f\n' | head -1)"
+          test -n "${BUILT}"
+          mv "${BUILT}" "${{ steps.version.outputs.bundle_name }}"
+          ls -lh "${{ steps.version.outputs.bundle_name }}"
+
+      - name: Create or update Git tag
+        if: steps.version.outputs.should_release == 'true'
+        env:
+          TAG: v${{ steps.version.outputs.upstream_version }}-${{ steps.version.outputs.pkg_rev }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists; leaving it unchanged."
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
+
+      - name: Create or update GitHub Release
+        if: steps.version.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.version.outputs.upstream_version }}-${{ steps.version.outputs.pkg_rev }}
+          BUNDLE: ${{ steps.version.outputs.bundle_name }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${BUNDLE}" --clobber
+          else
+            gh release create "${TAG}" "${BUNDLE}" \
+              --title "AdsPower Global ${{ steps.version.outputs.upstream_version }} (pkg ${{ steps.version.outputs.pkg_rev }})" \
+              --generate-notes
+          fi
+
+      - name: Upload bundle artifact for R2 workflow
+        if: steps.version.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.bundle_name }}
+          path: ${{ steps.version.outputs.bundle_name }}
+          retention-days: 2
+
+  upload-r2:
+    needs: check-and-build
+    if: needs.check-and-build.outputs.should_release == 'true'
+    uses: ./.github/workflows/upload-r2.yml
+    with:
+      bundle_name: ${{ needs.check-and-build.outputs.bundle_name }}
+      app_id: com.adspower.global
+      upstream_version: ${{ needs.check-and-build.outputs.upstream_version }}
+      pkg_rev: ${{ needs.check-and-build.outputs.pkg_rev }}
+    secrets: inherit
