@@ -59,7 +59,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: ostree-repo
-          path: repo
+          path: new-repo
           run-id: ${{ inputs.build_run_id }}
           github-token: ${{ github.token }}
 
@@ -102,11 +102,12 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          mkdir -p existing
+          mkdir -p existing repo
           aws s3 sync "s3://${R2_BUCKET}/" existing/ \
             --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
             --no-progress
           cp -a existing/. repo/ 2>/dev/null || true
+          cp -a new-repo/. repo/
 
       - name: Sign merged OSTree repository
         run: |
