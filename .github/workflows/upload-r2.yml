@@ -23,6 +23,10 @@ on:
         required: true
       R2_PUBLIC_URL:
         required: true
+      FLATPAK_GPG_PRIVATE_KEY:
+        required: true
+      FLATPAK_GPG_KEY_ID:
+        required: true
   workflow_dispatch:
     inputs:
       build_run_id:
@@ -57,12 +61,22 @@ jobs:
           run-id: ${{ inputs.build_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Install AWS CLI
+      - name: Install AWS CLI and GnuPG
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 python3-pip
+          sudo apt-get install -y flatpak python3 python3-pip gnupg
           python3 -m pip install --user --break-system-packages awscli
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -m 700 -p "${GNUPGHOME}"
+          echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
+          printf '%s\n' "${FLATPAK_GPG_PRIVATE_KEY}" | gpg --batch --import
+          echo "FLATPAK_GPG_KEY_ID=${FLATPAK_GPG_KEY_ID}" >> "$GITHUB_ENV"
+          GPG_PUBLIC_KEY_B64="$(gpg --batch --export "${FLATPAK_GPG_KEY_ID}" | base64 -w0)"
+          echo "FLATPAK_GPG_PUBLIC_KEY_B64=${GPG_PUBLIC_KEY_B64}" >> "$GITHUB_ENV"
 
       - name: Download existing R2 repository
         env:
@@ -77,6 +91,13 @@ jobs:
             --no-progress
           cp -a existing/. repo/ 2>/dev/null || true
 
+      - name: Sign merged OSTree repository
+        run: |
+          flatpak build-update-repo repo \
+            --title='Shared Flatpak Repository' \
+            --comment='Applications published to the shared repository' \
+            --gpg-sign="${FLATPAK_GPG_KEY_ID}"
+
       - name: Add Flatpak repository metadata
         env:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
@@ -86,7 +107,8 @@ jobs:
             "Url=${R2_PUBLIC_URL%/}" \
             "Homepage=${R2_PUBLIC_URL%/}" \
             'Comment=Shared Flatpak repository' \
-            'Description=Applications published to the shared repository' > repo/com.adspower.global.flatpakrepo
+            'Description=Applications published to the shared repository' \
+            "GPGKey=${FLATPAK_GPG_PUBLIC_KEY_B64}" > repo/com.adspower.global.flatpakrepo
 
       - name: Publish repository to R2
         env:
