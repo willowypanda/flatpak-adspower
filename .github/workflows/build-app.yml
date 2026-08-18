@@ -108,11 +108,22 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(python3 -c "import json; print(json.load(open('${APP_DIR}/deb_info.json'))['version'])")"
-          EXISTING="$(git ls-remote --tags origin "refs/tags/${TAG_PREFIX}-v${VERSION}-*" 2>/dev/null | sed -nE "s#.*refs/tags/${TAG_PREFIX}-v[0-9.]+-([0-9]+)(\\^\\{\\})?$#\\1#" | sort -n | tail -1)"
+          EXISTING=0
+          while read -r REF; do
+            TAG="${REF##*/}"
+            case "${TAG}" in
+              "${TAG_PREFIX}-v${VERSION}-"*)
+                REV_CANDIDATE="${TAG##*-}"
+                if [[ "${REV_CANDIDATE}" =~ ^[0-9]+$ ]] && [ "${REV_CANDIDATE}" -gt "${EXISTING}" ]; then
+                  EXISTING="${REV_CANDIDATE}"
+                fi
+                ;;
+            esac
+          done < <(git ls-remote --tags origin "refs/tags/${TAG_PREFIX}-v${VERSION}-*" 2>/dev/null | awk '{print $2}')
           if [ "${FORCE_BUILD}" = true ]; then
-            REV=$(( ${EXISTING:-0} + 1 ))
+            REV=$(( EXISTING + 1 ))
             PUBLISH=true
-          elif [ -n "${EXISTING}" ]; then
+          elif [ "${EXISTING}" -gt 0 ]; then
             REV="${EXISTING}"
             PUBLISH=false
           else
