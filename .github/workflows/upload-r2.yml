@@ -64,17 +64,6 @@ jobs:
           python3 -m pip install --user --break-system-packages awscli
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Add Flatpak repository metadata
-        env:
-          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
-        run: |
-          printf '%s\n' '[Flatpak Repo]' \
-            'Title=Shared Flatpak Repository' \
-            "Url=${R2_PUBLIC_URL%/}" \
-            "Homepage=${R2_PUBLIC_URL%/}" \
-            'Comment=Shared Flatpak repository' \
-            'Description=Applications published to the shared repository' > repo/com.adspower.global.flatpakrepo
-
       - name: Download existing R2 repository
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -87,6 +76,17 @@ jobs:
             --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
             --no-progress
           cp -a existing/. repo/ 2>/dev/null || true
+
+      - name: Add Flatpak repository metadata
+        env:
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          printf '%s\n' '[Flatpak Repo]' \
+            'Title=Shared Flatpak Repository' \
+            "Url=${R2_PUBLIC_URL%/}" \
+            "Homepage=${R2_PUBLIC_URL%/}" \
+            'Comment=Shared Flatpak repository' \
+            'Description=Applications published to the shared repository' > repo/com.adspower.global.flatpakrepo
 
       - name: Publish repository to R2
         env:
@@ -106,5 +106,5 @@ jobs:
 
       - name: Publication summary
         run: |
-          echo "Published AdsPower ${inputs.version}-${inputs.revision} to R2"
+          echo "Published AdsPower ${{ inputs.version }}-${{ inputs.revision }} to R2"
           echo "Remote: ${{ secrets.R2_PUBLIC_URL }}"
