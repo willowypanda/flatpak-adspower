@@ -50,7 +50,7 @@ jobs:
       bundle: ${{ steps.version.outputs.bundle }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -156,7 +156,7 @@ jobs:
           fi
 
       - name: Upload build result
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: build-result
           path: build-result.txt
@@ -164,7 +164,7 @@ jobs:
 
       - name: Upload OSTree repository for R2 workflow
         if: steps.version.outputs.publish == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ostree-repo
           path: repo
