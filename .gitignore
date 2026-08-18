@@ -2,6 +2,7 @@ repo/
 */repo/
 */build/
 */deb_download/
+*/deb_info.json
 */deb_extracted
 */.flatpak-builder/
 *.flatpak
