@@ -14,6 +14,11 @@ on:
         value: ${{ jobs.build.outputs.version }}
       revision:
         value: ${{ jobs.build.outputs.revision }}
+    secrets:
+      FLATPAK_GPG_PRIVATE_KEY:
+        required: true
+      FLATPAK_GPG_KEY_ID:
+        required: true
   workflow_dispatch:
     inputs:
       force_build:
@@ -55,6 +60,21 @@ jobs:
             org.freedesktop.Sdk//24.08 \
             org.electronjs.Electron2.BaseApp//24.08
 
+      - name: Import Flatpak signing key
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+        run: |
+          sudo apt-get install -y gnupg
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -m 700 -p "${GNUPGHOME}"
+          echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
+          printf '%s\n' "${FLATPAK_GPG_PRIVATE_KEY}" | gpg --batch --import
+          gpg --batch --list-secret-keys "${FLATPAK_GPG_KEY_ID}"
+          echo "FLATPAK_GPG_KEY_ID=${FLATPAK_GPG_KEY_ID}" >> "$GITHUB_ENV"
+          gpg --batch --export "${FLATPAK_GPG_KEY_ID}" | base64 -w0 > "${RUNNER_TEMP}/gpg-public-key.b64"
+          echo "FLATPAK_GPG_PUBLIC_KEY_B64=$(cat "${RUNNER_TEMP}/gpg-public-key.b64")" >> "$GITHUB_ENV"
+
       - name: Download latest AdsPower package
         run: ./download-latest.sh
 
@@ -88,7 +108,8 @@ jobs:
           ./build-flatpak.sh --no-bundle
           flatpak build-update-repo repo \
             --title='Shared Flatpak Repository' \
-            --comment='Applications published to the shared repository'
+            --comment='Applications published to the shared repository' \
+            --gpg-sign="${FLATPAK_GPG_KEY_ID}"
           test -s repo/summary
 
       - name: Create Git tag
@@ -112,7 +133,7 @@ jobs:
           TAG: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
           BUNDLE: ${{ steps.version.outputs.bundle }}
         run: |
-          timeout 30m flatpak build-bundle repo "${BUNDLE}" com.adspower.global
+          timeout 30m flatpak build-bundle --gpg-sign="${FLATPAK_GPG_KEY_ID}" repo "${BUNDLE}" com.adspower.global
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" "${BUNDLE}" --clobber
           else
