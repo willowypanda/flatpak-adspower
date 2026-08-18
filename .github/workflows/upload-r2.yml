@@ -27,6 +27,8 @@ on:
         required: true
       FLATPAK_GPG_KEY_ID:
         required: true
+      FLATPAK_GPG_PASSPHRASE:
+        required: true
   workflow_dispatch:
     inputs:
       build_run_id:
@@ -65,15 +67,27 @@ jobs:
         env:
           FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
           FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak python3 python3-pip gnupg
+          sudo apt-get install -y flatpak python3 python3-pip gnupg gnupg-utils
           python3 -m pip install --user --break-system-packages awscli
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export GNUPGHOME="${RUNNER_TEMP}/gnupg"
           mkdir -m 700 -p "${GNUPGHOME}"
           echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
           printf '%s\n' "${FLATPAK_GPG_PRIVATE_KEY}" | gpg --batch --import
+          cat > "${GNUPGHOME}/gpg-agent.conf" <<EOF
+          allow-preset-passphrase
+          default-cache-ttl 7200
+          max-cache-ttl 7200
+          EOF
+          gpgconf --homedir "${GNUPGHOME}" --launch gpg-agent
+          PRESET="$(command -v gpg-preset-passphrase || find /usr/lib -type f -name gpg-preset-passphrase | head -1)"
+          test -x "${PRESET}"
+          while read -r KEYGRIP; do
+            [ -z "${KEYGRIP}" ] || "${PRESET}" --homedir "${GNUPGHOME}" --preset "${KEYGRIP}" <<< "${FLATPAK_GPG_PASSPHRASE}"
+          done < <(gpg --homedir "${GNUPGHOME}" --with-keygrip --list-secret-keys --with-colons "${FLATPAK_GPG_KEY_ID}" | awk -F: '$1 == "grp" {print $10}')
           echo "FLATPAK_GPG_KEY_ID=${FLATPAK_GPG_KEY_ID}" >> "$GITHUB_ENV"
           GPG_PUBLIC_KEY_B64="$(gpg --batch --export "${FLATPAK_GPG_KEY_ID}" | base64 -w0)"
           echo "FLATPAK_GPG_PUBLIC_KEY_B64=${GPG_PUBLIC_KEY_B64}" >> "$GITHUB_ENV"
