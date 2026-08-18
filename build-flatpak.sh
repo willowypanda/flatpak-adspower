@@ -143,7 +143,12 @@ fi
 
 echo "[+] Building Flatpak..."
 cd "${PROJECT_DIR}"
-${FB} --force-clean --state-dir="${STATE_DIR}" --repo="${REPO_DIR}" "${BUILD_DIR}" "${MANIFEST}"
+BUILDER_GPG_ARGS=""
+if [ -n "${FLATPAK_GPG_KEY_ID:-}" ]; then
+    BUILDER_GPG_ARGS="--gpg-sign=${FLATPAK_GPG_KEY_ID}"
+    echo "[+] Signing exported Flatpak commits with GPG key ${FLATPAK_GPG_KEY_ID}"
+fi
+${FB} ${BUILDER_GPG_ARGS} --force-clean --state-dir="${STATE_DIR}" --repo="${REPO_DIR}" "${BUILD_DIR}" "${MANIFEST}"
 
 if [ "${NO_BUNDLE}" = true ]; then
     echo "[+] Bundle creation skipped; OSTree repository is ready: ${REPO_DIR}"
