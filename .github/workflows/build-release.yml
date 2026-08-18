@@ -19,6 +19,8 @@ on:
         required: true
       FLATPAK_GPG_KEY_ID:
         required: true
+      FLATPAK_GPG_PASSPHRASE:
+        required: true
   workflow_dispatch:
     inputs:
       force_build:
@@ -64,17 +66,25 @@ jobs:
         env:
           FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
           FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
         run: |
-          sudo apt-get install -y gnupg
+          sudo apt-get install -y gnupg gnupg-utils
           export GNUPGHOME="${RUNNER_TEMP}/gnupg"
           mkdir -m 700 -p "${GNUPGHOME}"
           echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
           printf '%s\n' "${FLATPAK_GPG_PRIVATE_KEY}" | gpg --batch --import
-          gpg --batch --list-secret-keys "${FLATPAK_GPG_KEY_ID}"
+          cat > "${GNUPGHOME}/gpg-agent.conf" <<EOF
+          allow-preset-passphrase
+          default-cache-ttl 7200
+          max-cache-ttl 7200
+          EOF
+          gpgconf --homedir "${GNUPGHOME}" --launch gpg-agent
+          PRESET="$(command -v gpg-preset-passphrase || find /usr/lib -type f -name gpg-preset-passphrase | head -1)"
+          test -x "${PRESET}"
+          while read -r KEYGRIP; do
+            [ -z "${KEYGRIP}" ] || "${PRESET}" --homedir "${GNUPGHOME}" --preset "${KEYGRIP}" <<< "${FLATPAK_GPG_PASSPHRASE}"
+          done < <(gpg --homedir "${GNUPGHOME}" --with-keygrip --list-secret-keys --with-colons "${FLATPAK_GPG_KEY_ID}" | awk -F: '$1 == "grp" {print $10}')
           echo "FLATPAK_GPG_KEY_ID=${FLATPAK_GPG_KEY_ID}" >> "$GITHUB_ENV"
-          gpg --batch --export "${FLATPAK_GPG_KEY_ID}" | base64 -w0 > "${RUNNER_TEMP}/gpg-public-key.b64"
-          echo "FLATPAK_GPG_PUBLIC_KEY_B64=$(cat "${RUNNER_TEMP}/gpg-public-key.b64")" >> "$GITHUB_ENV"
-
       - name: Download latest AdsPower package
         run: ./download-latest.sh
 
