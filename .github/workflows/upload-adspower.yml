@@ -1,0 +1,52 @@
+name: Upload AdsPower repository to willowypanda-custom-flathub
+
+on:
+  workflow_call:
+    inputs:
+      build_run_id:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      revision:
+        required: true
+        type: string
+      artifact_name:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful build workflow run ID
+        required: true
+        type: string
+      version:
+        description: AdsPower version
+        required: true
+        type: string
+      revision:
+        description: Packaging revision
+        required: true
+        type: string
+      artifact_name:
+        description: Build artifact name
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  upload:
+    uses: ./.github/workflows/upload-app.yml
+    with:
+      build_run_id: ${{ inputs.build_run_id }}
+      app_dir: adspower
+      app_id: com.adspower.global
+      app_name: AdsPower Global
+      version: ${{ inputs.version }}
+      revision: ${{ inputs.revision }}
+      artifact_name: ${{ inputs.artifact_name }}
+    secrets: inherit

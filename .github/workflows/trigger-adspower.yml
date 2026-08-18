@@ -1,4 +1,4 @@
-name: Run build release and R2 upload
+name: Run AdsPower build and R2 upload
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    uses: ./.github/workflows/build-release.yml
+    uses: ./.github/workflows/build-adspower.yml
     with:
       force_build: ${{ inputs.force_build || false }}
     secrets: inherit
@@ -25,9 +25,10 @@ jobs:
   upload-r2:
     needs: build
     if: needs.build.outputs.publish == 'true'
-    uses: ./.github/workflows/upload-r2.yml
+    uses: ./.github/workflows/upload-adspower.yml
     with:
       build_run_id: ${{ github.run_id }}
       version: ${{ needs.build.outputs.version }}
       revision: ${{ needs.build.outputs.revision }}
+      artifact_name: ${{ needs.build.outputs.artifact_name }}
     secrets: inherit

@@ -1,4 +1,4 @@
-name: Upload Flatpak repository to Cloudflare R2
+name: Upload reusable Flatpak application repository
 
 on:
   workflow_call:
@@ -6,10 +6,22 @@ on:
       build_run_id:
         required: true
         type: string
+      app_dir:
+        required: true
+        type: string
+      app_id:
+        required: true
+        type: string
+      app_name:
+        required: true
+        type: string
       version:
         required: true
         type: string
       revision:
+        required: true
+        type: string
+      artifact_name:
         required: true
         type: string
     secrets:
@@ -29,20 +41,6 @@ on:
         required: true
       FLATPAK_GPG_PASSPHRASE:
         required: true
-  workflow_dispatch:
-    inputs:
-      build_run_id:
-        description: Successful build workflow run ID
-        required: true
-        type: string
-      version:
-        description: AdsPower version
-        required: true
-        type: string
-      revision:
-        description: Packaging revision
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -55,10 +53,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download OSTree artifact from build workflow
+      - name: Download application OSTree artifact
         uses: actions/download-artifact@v8
         with:
-          name: ostree-repo
+          name: ${{ inputs.artifact_name }}
           path: new-repo
           run-id: ${{ inputs.build_run_id }}
           github-token: ${{ github.token }}
@@ -95,7 +93,7 @@ jobs:
           GPG_PUBLIC_KEY_B64="$(/usr/bin/gpg --homedir "${GNUPGHOME}" --batch --export "${FLATPAK_GPG_KEY_ID}" | base64 -w0)"
           echo "FLATPAK_GPG_PUBLIC_KEY_B64=${GPG_PUBLIC_KEY_B64}" >> "$GITHUB_ENV"
 
-      - name: Download existing R2 repository
+      - name: Download existing shared repository
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -103,72 +101,59 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           mkdir -p existing repo
-          aws s3 sync "s3://${R2_BUCKET}/" existing/ \
-            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
-            --no-progress
+          aws s3 sync "s3://${R2_BUCKET}/" existing/ --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --no-progress
           cp -a existing/. repo/ 2>/dev/null || true
           cp -a new-repo/. repo/
 
-      - name: Sign merged OSTree repository
+      - name: Sign shared OSTree repository
         run: |
           flatpak build-update-repo repo \
-            --title='Shared Flatpak Repository' \
-            --comment='Applications published to the shared repository' \
+            --title='willowypanda-custom-flathub' \
+            --comment='Custom Flatpak repository' \
             --gpg-sign="${FLATPAK_GPG_KEY_ID}"
 
-      - name: Add Flatpak repository metadata
+      - name: Add shared repository metadata
         env:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
           printf '%s\n' '[Flatpak Repo]' \
-            'Title=Shared Flatpak Repository' \
+            'Title=willowypanda-custom-flathub' \
             "Url=${R2_PUBLIC_URL%/}" \
             "Homepage=${R2_PUBLIC_URL%/}" \
-            'Comment=Shared Flatpak repository' \
-            'Description=Applications published to the shared repository' \
-            "GPGKey=${FLATPAK_GPG_PUBLIC_KEY_B64}" > repo/com.adspower.global.flatpakrepo
+            'Comment=Custom Flatpak repository' \
+            'Description=Flatpak applications published by willowypanda' \
+            "GPGKey=${FLATPAK_GPG_PUBLIC_KEY_B64}" > repo/willowypanda-custom-flathub.flatpakrepo
 
-      - name: Publish repository to R2
+      - name: Publish shared repository to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          aws s3 sync repo/ "s3://${R2_BUCKET}/" \
-            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
-            --no-progress
-          # Explicitly publish the verification-critical files after sync.
-          aws s3 cp repo/summary "s3://${R2_BUCKET}/summary" \
-            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
-            --content-type application/octet-stream
-          aws s3 cp repo/summary.sig "s3://${R2_BUCKET}/summary.sig" \
-            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
-            --content-type application/pgp-signature
-          aws s3 cp repo/com.adspower.global.flatpakrepo "s3://${R2_BUCKET}/com.adspower.global.flatpakrepo" \
-            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
-            --content-type text/plain
+          aws s3 sync repo/ "s3://${R2_BUCKET}/" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --no-progress
+          aws s3 cp repo/summary "s3://${R2_BUCKET}/summary" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --content-type application/octet-stream
+          aws s3 cp repo/summary.sig "s3://${R2_BUCKET}/summary.sig" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --content-type application/pgp-signature
+          aws s3 cp repo/willowypanda-custom-flathub.flatpakrepo "s3://${R2_BUCKET}/willowypanda-custom-flathub.flatpakrepo" --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" --content-type text/plain
 
-      - name: Verify public summary
+      - name: Verify public shared repository
         env:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
           set -e
           for attempt in $(seq 1 12); do
-            if curl --fail --location --silent --show-error \
-              "${R2_PUBLIC_URL%/}/summary?verify=${attempt}" >/dev/null; then
-              curl --fail --location --silent --show-error \
-                "${R2_PUBLIC_URL%/}/summary.sig?verify=${attempt}" >/dev/null
-              echo "R2 summary and signature are publicly reachable"
+            if curl --fail --location --silent --show-error "${R2_PUBLIC_URL%/}/summary?verify=${attempt}" >/dev/null; then
+              curl --fail --location --silent --show-error "${R2_PUBLIC_URL%/}/summary.sig?verify=${attempt}" >/dev/null
+              echo "R2 shared summary and signature are publicly reachable"
               exit 0
             fi
             echo "summary not visible yet; retry ${attempt}/12"
             sleep 10
           done
-          echo "R2 summary was not publicly reachable after retries" >&2
+          echo "R2 shared summary was not publicly reachable after retries" >&2
           exit 1
 
       - name: Publication summary
         run: |
-          echo "Published AdsPower ${{ inputs.version }}-${{ inputs.revision }} to R2"
+          echo "Published ${{ inputs.app_name }} ${{ inputs.version }}-${{ inputs.revision }} to willowypanda-custom-flathub"
           echo "Remote: ${{ secrets.R2_PUBLIC_URL }}"

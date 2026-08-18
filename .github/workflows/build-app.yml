@@ -1,8 +1,23 @@
-name: Build AdsPower Flatpak release
+name: Build reusable Flatpak application
 
 on:
   workflow_call:
     inputs:
+      app_dir:
+        required: true
+        type: string
+      app_id:
+        required: true
+        type: string
+      app_name:
+        required: true
+        type: string
+      tag_prefix:
+        required: true
+        type: string
+      bundle_prefix:
+        required: true
+        type: string
       force_build:
         required: false
         type: boolean
@@ -14,6 +29,10 @@ on:
         value: ${{ jobs.build.outputs.version }}
       revision:
         value: ${{ jobs.build.outputs.revision }}
+      bundle:
+        value: ${{ jobs.build.outputs.bundle }}
+      artifact_name:
+        value: ${{ jobs.build.outputs.artifact_name }}
     secrets:
       FLATPAK_GPG_PRIVATE_KEY:
         required: true
@@ -21,20 +40,6 @@ on:
         required: true
       FLATPAK_GPG_PASSPHRASE:
         required: true
-  workflow_dispatch:
-    inputs:
-      force_build:
-        description: Force a rebuild
-        required: false
-        default: false
-        type: boolean
-      force_pkg_rev:
-        description: Packaging revision override
-        required: false
-        default: ''
-        type: string
-  schedule:
-    - cron: '0 */6 * * *'
 
 permissions:
   contents: write
@@ -48,6 +53,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       revision: ${{ steps.version.outputs.revision }}
       bundle: ${{ steps.version.outputs.bundle }}
+      artifact_name: ${{ steps.version.outputs.artifact_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -68,7 +74,7 @@ jobs:
           FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
           FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
         run: |
-          sudo apt-get install -y gnupg gnupg-utils
+          sudo apt-get install -y gnupg
           export GNUPGHOME="${RUNNER_TEMP}/gnupg"
           mkdir -m 700 -p "${GNUPGHOME}"
           echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
@@ -88,17 +94,22 @@ jobs:
           echo "GPG_PASSPHRASE_FILE=${PASSFILE}" >> "$GITHUB_ENV"
           echo "PATH=${WRAPDIR}:$PATH" >> "$GITHUB_ENV"
           echo "FLATPAK_GPG_KEY_ID=${FLATPAK_GPG_KEY_ID}" >> "$GITHUB_ENV"
-      - name: Download latest AdsPower package
-        run: ./download-latest.sh
+
+      - name: Download application package
+        run: ./${{ inputs.app_dir }}/download-latest.sh
 
       - name: Determine version and package revision
         id: version
+        env:
+          APP_DIR: ${{ inputs.app_dir }}
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+          BUNDLE_PREFIX: ${{ inputs.bundle_prefix }}
+          FORCE_BUILD: ${{ inputs.force_build }}
         run: |
           set -euo pipefail
-          VERSION="$(python3 -c "import json; print(json.load(open('deb_info.json'))['version'])")"
-          EXISTING="$(git ls-remote --tags origin "refs/tags/v${VERSION}-*" 2>/dev/null | sed -nE 's#.*refs/tags/v[0-9.]+-([0-9]+)(\^\{\})?$#\1#' | sort -n | tail -1)"
-          FORCE="${{ inputs.force_build || 'false' }}"
-          if [ "${FORCE}" = true ]; then
+          VERSION="$(python3 -c "import json; print(json.load(open('${APP_DIR}/deb_info.json'))['version'])")"
+          EXISTING="$(git ls-remote --tags origin "refs/tags/${TAG_PREFIX}-v${VERSION}-*" 2>/dev/null | sed -nE "s#.*refs/tags/${TAG_PREFIX}-v[0-9.]+-([0-9]+)(\\^\\{\\})?$#\\1#" | sort -n | tail -1)"
+          if [ "${FORCE_BUILD}" = true ]; then
             REV=$(( ${EXISTING:-0} + 1 ))
             PUBLISH=true
           elif [ -n "${EXISTING}" ]; then
@@ -108,27 +119,32 @@ jobs:
             REV=1
             PUBLISH=true
           fi
+          BUNDLE="${BUNDLE_PREFIX}-${VERSION}-${REV}.flatpak"
+          ARTIFACT="${APP_DIR}-ostree-repo"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "revision=${REV}" >> "$GITHUB_OUTPUT"
           echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
-          echo "bundle=adspower-global-${VERSION}-${REV}.flatpak" >> "$GITHUB_OUTPUT"
-          printf 'publish=%s\nversion=%s\nrevision=%s\nbundle=adspower-global-%s-%s.flatpak\n' \
-            "${PUBLISH}" "${VERSION}" "${REV}" "${VERSION}" "${REV}" > build-result.txt
+          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          printf 'publish=%s\nversion=%s\nrevision=%s\nbundle=%s\nartifact_name=%s\n' \
+            "${PUBLISH}" "${VERSION}" "${REV}" "${BUNDLE}" "${ARTIFACT}" > build-result.txt
 
       - name: Build Flatpak OSTree repository
         if: steps.version.outputs.publish == 'true'
+        env:
+          APP_DIR: ${{ inputs.app_dir }}
         run: |
-          ./build-flatpak.sh --no-bundle
-          flatpak build-update-repo repo \
-            --title='Shared Flatpak Repository' \
-            --comment='Applications published to the shared repository' \
+          ./${APP_DIR}/build-flatpak.sh --no-bundle
+          flatpak build-update-repo "${APP_DIR}/repo" \
+            --title='willowypanda-custom-flathub' \
+            --comment='Custom Flatpak repository' \
             --gpg-sign="${FLATPAK_GPG_KEY_ID}"
-          test -s repo/summary
+          test -s "${APP_DIR}/repo/summary"
 
       - name: Create Git tag
         if: steps.version.outputs.publish == 'true'
         env:
-          TAG: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
+          TAG: ${{ inputs.tag_prefix }}-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
@@ -143,32 +159,31 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
+          TAG: ${{ inputs.tag_prefix }}-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.revision }}
           BUNDLE: ${{ steps.version.outputs.bundle }}
+          APP_DIR: ${{ inputs.app_dir }}
+          APP_ID: ${{ inputs.app_id }}
+          APP_NAME: ${{ inputs.app_name }}
         run: |
-          timeout 30m flatpak build-bundle --gpg-sign="${FLATPAK_GPG_KEY_ID}" repo "${BUNDLE}" com.adspower.global
+          timeout 30m flatpak build-bundle --gpg-sign="${FLATPAK_GPG_KEY_ID}" "${APP_DIR}/repo" "${BUNDLE}" "${APP_ID}"
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" "${BUNDLE}" --clobber
           else
-            gh release create "${TAG}" "${BUNDLE}" \
-              --title "AdsPower Global ${{ steps.version.outputs.version }} (pkg ${{ steps.version.outputs.revision }})" \
-              --generate-notes
+            gh release create "${TAG}" "${BUNDLE}" --title "${APP_NAME} ${{ steps.version.outputs.version }} (pkg ${{ steps.version.outputs.revision }})" --generate-notes
           fi
 
       - name: Upload build result
         uses: actions/upload-artifact@v7
         with:
-          name: build-result
+          name: ${{ steps.version.outputs.artifact_name }}-result
           path: build-result.txt
           retention-days: 3
 
-      - name: Upload OSTree repository for R2 workflow
+      - name: Upload application OSTree repository
         if: steps.version.outputs.publish == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: ostree-repo
-          path: repo
+          name: ${{ steps.version.outputs.artifact_name }}
+          path: ${{ inputs.app_dir }}/repo
           retention-days: 3
           if-no-files-found: error
-
-  

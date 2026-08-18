@@ -1,0 +1,6 @@
+[Flatpak Ref]
+Name=com.adspower.global
+Branch=master
+Title=AdsPower Global
+Url=https://pub-679acc1c8310441ab00c00f2c8dae9a4.r2.dev
+IsRuntime=false

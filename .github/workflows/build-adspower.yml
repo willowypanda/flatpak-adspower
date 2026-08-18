@@ -1,0 +1,45 @@
+name: Build AdsPower Flatpak release
+
+on:
+  workflow_call:
+    inputs:
+      force_build:
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      publish:
+        value: ${{ jobs.build.outputs.publish }}
+      version:
+        value: ${{ jobs.build.outputs.version }}
+      revision:
+        value: ${{ jobs.build.outputs.revision }}
+      bundle:
+        value: ${{ jobs.build.outputs.bundle }}
+      artifact_name:
+        value: ${{ jobs.build.outputs.artifact_name }}
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Force a rebuild and new packaging revision
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-app.yml
+    with:
+      app_dir: adspower
+      app_id: com.adspower.global
+      app_name: AdsPower Global
+      tag_prefix: adspower
+      bundle_prefix: adspower-global
+      force_build: ${{ inputs.force_build || false }}
+    secrets: inherit
