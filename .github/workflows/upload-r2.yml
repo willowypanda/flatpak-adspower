@@ -73,8 +73,7 @@ jobs:
             "Url=${R2_PUBLIC_URL%/}" \
             "Homepage=${R2_PUBLIC_URL%/}" \
             'Comment=Shared Flatpak repository' \
-            'Description=Applications published to the shared repository' \
-            'GPGKey=' > repo/com.adspower.global.flatpakrepo
+            'Description=Applications published to the shared repository' > repo/com.adspower.global.flatpakrepo
 
       - name: Download existing R2 repository
         env:
