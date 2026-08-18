@@ -80,6 +80,7 @@ jobs:
           PASSFILE="${RUNNER_TEMP}/gpg-passphrase"
           umask 077
           printf '%s' "${FLATPAK_GPG_PASSPHRASE}" > "${PASSFILE}"
+          printf '%s\n' 'pinentry-mode loopback' "passphrase-file ${PASSFILE}" > "${GNUPGHOME}/gpg.conf"
           WRAPDIR="${RUNNER_TEMP}/gpg-bin"
           mkdir -m 700 -p "${WRAPDIR}"
           cat > "${WRAPDIR}/gpg" <<'EOF'
@@ -87,6 +88,7 @@ jobs:
           exec /usr/bin/gpg --batch --pinentry-mode loopback --passphrase-file "${GPG_PASSPHRASE_FILE}" "$@"
           EOF
           chmod 700 "${WRAPDIR}/gpg"
+          ln -s gpg "${WRAPDIR}/gpg2"
           echo "GPG_PASSPHRASE_FILE=${PASSFILE}" >> "$GITHUB_ENV"
           echo "PATH=${WRAPDIR}:$PATH" >> "$GITHUB_ENV"
           echo "FLATPAK_GPG_KEY_ID=${FLATPAK_GPG_KEY_ID}" >> "$GITHUB_ENV"
